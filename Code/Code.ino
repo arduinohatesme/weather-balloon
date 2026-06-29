@@ -196,16 +196,12 @@ void WiFiReconnectorTask(void* pvParameters) {
 }
 
 void setup() {
-
   pinMode(3, OUTPUT);
   digitalWrite(3, LOW);
 
   Serial.begin(115200);
   unsigned long start = millis();
   while (!Serial && millis() - start < 3000);
-
-  setBuiltInLED(BOOTING);
-  printLog({ INFO, "[init]", "Initializing system..." });
 
   Wire.begin();
 
@@ -267,7 +263,7 @@ String internalTime() {
     return "000000";
   }
   char buf[16];
-  snprintf(buf, sizeof(buf), (const char*)timeinfo.tm_mday, (const char*)timeinfo.tm_hour, (const char*)timeinfo.tm_min);
+  snprintf(buf, sizeof(buf), "%02d%02d%02d", (const char*)timeinfo.tm_mday, (const char*)timeinfo.tm_hour, (const char*)timeinfo.tm_min);
   return String(buf);
 }
 
@@ -289,6 +285,17 @@ String formatHumidity(float humidity) {
   char buffer[4];
   sprintf(buffer, "%02d", humidityRounded % 100);
   return String(buffer);
+}
+
+void printMeasurements(SensorReadings data) {
+  Serial.printf(
+    "%s\n---------------------------@%s/t%sh%sb%s\n",
+    getCoordinates(data),
+    internalTime(),
+    formatTemp(data.BMP_temp),
+    formatHumidity(data.humidity),
+    formatPressure(data.pressure),
+  );
 }
 
 unsigned long lastTime = 0;
@@ -314,23 +321,14 @@ void loop() {
   SensorReadings data = readSensors();
   setBuiltInLED(currentState);
 
+  printMeasurements(data);
+
   WindGust = max(WindGust, data.wind_speed);
 
   if (currentState != SYSTEM_OK) {
     printLog({ ERROR, "[main]", "Something went wrong. Check logs above." });
     currentState = READ_ERROR;
   };
-
-  Serial.println(getCoordinates(data));
-  Serial.println("\n---------------------------");
-  Serial.print("@");
-  Serial.print(internalTime());
-  Serial.print("/t");
-  Serial.print(formatTemp(data.BMP_temp));
-  Serial.print("h");
-  Serial.print(formatHumidity(data.humidity));
-  Serial.print("b");
-  Serial.println(formatPressure(data.pressure));
 
   printLog({ INFO, "[gps]", "Looking for satellites. Found: %s" }, (char*)gps.satellites.value());
   currentState = READ_ERROR;
