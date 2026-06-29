@@ -7,8 +7,9 @@
 #include <TinyGPSPlus.h>
 #include <math.h>
 
-#define DHT22_PIN D2
+#define DHT22_PIN 2
 #define DHTTYPE DHT22
+#define ERR_VAL -999.0
 
 #define RGB_BRIGHTNESS 64
 #if defined(RGB_BUILTIN)
@@ -24,7 +25,19 @@ enum SystemState {
   HARDWARE_FIX
 };
 
-SystemState currentState = BOOTING;
+enum LogSeverity {
+  DEBUG,
+  INFO,
+  WARNING,
+  ERROR,
+};
+
+const char* sevStrs[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
+
+struct NetworkInfo {
+  char* ssid;
+  char* pass;
+};
 
 struct SensorReadings {
   float DHT_temp;
@@ -37,6 +50,12 @@ struct SensorReadings {
   float wind_dir;
 };
 
+struct LogMessage {
+  LogSeverity severity;
+  char* task;
+  char* message;
+};
+
 const char* ntpServer = "pool.ntp.org";
 
 float last_v = 0;
@@ -45,6 +64,20 @@ unsigned long last_time = 0;
 DHT dht(DHT22_PIN, DHTTYPE);
 Adafruit_BMP280 bmp;
 TinyGPSPlus gps;
+SystemState currentState = BOOTING;
+
+void printLog(LogMessage l, ...) {
+  char buf[128];
+
+  va_list args;
+  va_start(args, l);
+  vsnprintf(buf, sizeof(buf), l.message, args);
+  va_end(args);
+
+  const char* sevStr = sevStrs[(int)l.severity];
+
+  Serial.printf("[%s] [%s] %s\n", sevStr, l.task, buf);
+}
 
 void setBuiltInLED(SystemState state) {
   switch (state) {
@@ -105,24 +138,28 @@ void DHT_Startup() {
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   if (isnan(h) || isnan(t)) {
-    Serial.println("dht22 no connecto :(");
+    printLog({ ERROR, "dht22", "Error reading data. Check wiring." });
+    printLog({ ERROR, "[dht22]", "Humidity: %s" }, char(h));
+    printLog({ ERROR, "[dht22]", "Temperature: %f\n" }, h);
     currentState = READ_ERROR;
-  } else {
-    Serial.println("DHT22 Connected and Sending Data.");
+    return;
   }
+  printLog({ INFO, "[dht22]", "DHT22 Connected and Sending Data." });
 }
 
 bool timeSynced = false;
 
-const char* networks[][2] = {
+const NetworkInfo networks[2] = {
   { "Launchpad Internal", "L@unchP@d!nc" },
   { "Bill Clinternet", "UsmC2336" },
 };
 
-void connectWithTimeout() {
+void connectWithTimeout(const NetworkInfo* nets) {
   for (int i = 0; i < 2; i++) {
-    Serial.printf("Trying %s", networks[i][0]);
-    WiFi.begin(networks[i][0], networks[i][1]);
+    printLog({ DEBUG, "[network]"
+                      "Trying %s" },
+             nets[i].ssid);
+    WiFi.begin(nets[i].pass, nets[i].ssid);
 
     unsigned long startAttemptTime = millis();
 
@@ -131,42 +168,30 @@ void connectWithTimeout() {
       Serial.print(".");
     }
 
+    Serial.println();
+
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nBluetooth Connected");
+      printLog({ INFO, "[network]"
+                       "Connected to %s\n" },
+               WiFi.SSID().c_str());
       configTime(0, 0, ntpServer);
       return;
-    } else {
-      Serial.println("\nNooo mi hotspot");
     }
+
+    printLog({ WARNING, "[network]"
+                        "Connection attempt failed to network: %s\n" },
+             nets[i].ssid);
   }
-  Serial.println("I have no bars 😭");
+  printLog({ ERROR, "[network]"
+                    "All connection attempts failed." });
 }
 
 void WiFiReconnectorTask(void* pvParameters) {
-  for (;;) {
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("[WiFi Task] Connection lost. Retrying...");
-
-      for (int i = 0; i < 2; i++) {
-        WiFi.begin(networks[i][0], networks[i][1]);
-        unsigned long start = millis();
-
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-          vTaskDelay(500 / portTICK_PERIOD_MS);
-        }
-
-        if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("[WiFi Task] Connected!");
-          configTime(0, 0, ntpServer);
-          break;
-        }
-      }
-    }
-
-
+  while (WiFi.status() != WL_CONNECTED) {
+    printLog({ WARNING, "[network]"
+                        "Connection lost. Retrying..." });
+    connectWithTimeout(networks);
     vTaskDelay(30000 / portTICK_PERIOD_MS);
-
-    
   }
 }
 
@@ -177,23 +202,22 @@ void setup() {
 
   Serial.begin(115200);
   unsigned long start = millis();
-  while (!Serial && millis() - start < 3000)
-    ;
+  while (!Serial && millis() - start < 3000);
 
   setBuiltInLED(BOOTING);
-  Serial.println("--- ESP32-S3 Weather Station ---");
+  printLog({ INFO, "[init]", "Initializing system..." });
 
   Wire.begin();
 
   if (!bmp.begin(0x76) && !bmp.begin(0x77)) {
-    Serial.println("BMP not found!");
+    printLog({ ERROR, "[bmp280]", "Error connecting over I2C. Check wiring." });
     currentState = HARDWARE_FIX;
     setBuiltInLED(HARDWARE_FIX);
     while (1) delay(10);
   }
 
   Serial1.setRxBufferSize(2048);
-  Serial1.begin(115200, SERIAL_8N1, D7, D8, false);
+  Serial1.begin(115200, SERIAL_8N1, 7, 8, false);
 
   DHT_Startup();
 
@@ -204,9 +228,9 @@ void setup() {
                   Adafruit_BMP280::STANDBY_MS_500);
 
   WiFi.mode(WIFI_STA);
-  connectWithTimeout();
+  connectWithTimeout(networks);
 
-  Serial.println("Sensors Initialized.");
+  printLog({ INFO, "[init]", "All systems initialized." });
 
   xTaskCreatePinnedToCore(
     WiFiReconnectorTask,
@@ -218,28 +242,45 @@ void setup() {
     0);
 }
 
-int WindGust = 0;
+String getCoordinates(SensorReadings data) {
+  if (!gps.location.isValid()) return "0000.00N/00000.00W_";
 
-void printInternalTime() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Time not set yet (sync with NTP first)");
-    return;
-  }
-  Serial.print(&timeinfo, "%d%H%Mz");
+  int latDeg = (int)data.latitude;
+  double latMin = (data.latitude - latDeg) * 60.0;
+  char latStr[9];
+  sprintf(latStr, "%02d%05.2f%c", abs(latDeg), latMin, (latDeg >= 0) ? 'N' : 'S');
+
+  int lngDeg = (int)data.longitude;
+  double lngMin = (data.longitude - lngDeg) * 60.0;
+  char lngStr[10];
+  sprintf(lngStr, "%03d%05.2f%c", abs(lngDeg), lngMin, (lngDeg >= 0) ? 'E' : 'W');
+
+  return latStr, "/", lngStr, "_";
 }
 
-String formatTemp(float tempCelsius) {
-  int tempRounded = (int)round(tempCelsius * 1.8 + 32);
+float WindGust = 0;
+
+String internalTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    printLog({ WARNING, "[time]", "Time not set yet. Sync with NTP first." });
+    return "000000";
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), (const char*)timeinfo.tm_mday, (const char*)timeinfo.tm_hour, (const char*)timeinfo.tm_min);
+  return String(buf);
+}
+
+String formatTemp(float tempF) {
+  int tempRounded = (int)round(tempF);
   char buffer[5];
   sprintf(buffer, "%03d", tempRounded % 1000);
   return String(buffer);
 }
 
 String formatPressure(float pressure) {
-  int pressureRounded = (int)round(pressure * 10);
   char buffer[7];
-  sprintf(buffer, "%05d", pressureRounded % 100000);
+  sprintf(buffer, "%05d", (int)((long)pressure % (long)100000.0));
   return String(buffer);
 }
 
@@ -257,64 +298,40 @@ bool currentInversion = false;
 long currentBaud = 115200;
 
 void loop() {
-
   int bytesProcessed = 0;
-  while (Serial1.available() > 0 && bytesProcessed < 128) {
+  for (int i = 0; i < 128 && Serial1.available() > 0; i++) {
     char c = Serial1.read();
-    bytesProcessed++;
 
     if ((c >= 32 && c <= 126) || c == '\r' || c == '\n') {
-        Serial.write(c);
-        gps.encode(c);
+      Serial.write(c);
+      gps.encode(c);
     }
   }
 
-  if (millis() - lastTime >= interval) {
-    lastTime = millis();
-    SensorReadings data = readSensors();
-    setBuiltInLED(currentState);
+  if (millis() - lastTime <= interval) return;
 
-    if (data.wind_speed > WindGust) {
-      WindGust = data.wind_speed;
-    }
+  lastTime = millis();
+  SensorReadings data = readSensors();
+  setBuiltInLED(currentState);
 
-    if (currentState == SYSTEM_OK || 1 == 1) {
-      Serial.println("\n---------------------------");
-      Serial.print("@");
-      if (gps.location.isValid()) {
-        int latDeg = (int)data.latitude;
-        double latMin = (data.latitude - latDeg) * 60.0;
-        char latStr[9];
-        sprintf(latStr, "%02d%05.2f%c", abs(latDeg), latMin, (latDeg >= 0) ? 'N' : 'S');
+  WindGust = max(WindGust, data.wind_speed);
 
-        int lngDeg = (int)data.longitude;
-        double lngMin = (data.longitude - lngDeg) * 60.0;
-        char lngStr[10];
-        sprintf(lngStr, "%03d%05.2f%c", abs(lngDeg), lngMin, (lngDeg >= 0) ? 'E' : 'W');
+  if (currentState != SYSTEM_OK) {
+    printLog({ ERROR, "[main]", "Something went wrong. Check logs above." });
+    currentState = READ_ERROR;
+  };
 
-        Serial.print(latStr);
-        Serial.print("/");
-        Serial.print(lngStr);
-        Serial.print("_");
-      } else {
-        Serial.print("0000.00N/00000.00W_");
-      }
-      printInternalTime();
-      Serial.print("/t");
-      Serial.print(formatTemp(data.BMP_temp));
-      Serial.print("h");
-      Serial.print(formatHumidity(data.humidity));
-      Serial.print("b");
-      Serial.println(formatPressure(data.pressure));
+  Serial.println(getCoordinates(data));
+  Serial.println("\n---------------------------");
+  Serial.print("@");
+  Serial.print(internalTime());
+  Serial.print("/t");
+  Serial.print(formatTemp(data.BMP_temp));
+  Serial.print("h");
+  Serial.print(formatHumidity(data.humidity));
+  Serial.print("b");
+  Serial.println(formatPressure(data.pressure));
 
-      if (gps.location.isValid()) {
-      } else {
-        Serial.println("gps is looking for satelites :O (" + String(gps.satellites.value()) + " satellites found)");
-        currentState = READ_ERROR;
-      }
-    } else {
-      Serial.println("Ruh roh raggy, something is wrong D:");
-      currentState = READ_ERROR;
-    }
-  }
+  printLog({ INFO, "[gps]", "Looking for satellites. Found: %s" }, (char*)gps.satellites.value());
+  currentState = READ_ERROR;
 }
