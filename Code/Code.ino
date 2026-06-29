@@ -196,12 +196,16 @@ void WiFiReconnectorTask(void* pvParameters) {
 }
 
 void setup() {
+
   pinMode(3, OUTPUT);
   digitalWrite(3, LOW);
 
   Serial.begin(115200);
   unsigned long start = millis();
   while (!Serial && millis() - start < 3000);
+
+  setBuiltInLED(BOOTING);
+  printLog({ INFO, "[init]", "Initializing system..." });
 
   Wire.begin();
 
@@ -290,12 +294,11 @@ String formatHumidity(float humidity) {
 void printMeasurements(SensorReadings data) {
   Serial.printf(
     "%s\n---------------------------@%s/t%sh%sb%s\n",
-    getCoordinates(data),
-    internalTime(),
-    formatTemp(data.BMP_temp),
-    formatHumidity(data.humidity),
-    formatPressure(data.pressure),
-  );
+    getCoordinates(data).c_str(),
+    internalTime().c_str(),
+    formatTemp(data.BMP_temp).c_str(),
+    formatHumidity(data.humidity).c_str(),
+    formatPressure(data.pressure).c_str());
 }
 
 unsigned long lastTime = 0;
