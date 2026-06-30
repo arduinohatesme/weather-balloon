@@ -6,6 +6,7 @@
 
 #include "BalloonController.h"
 #include "Arduino.h"
+#include "HardwareSerial.h"
 
 #include <WiFi.h>
 #include <Wire.h>
@@ -49,7 +50,7 @@ BalloonController::BalloonController() {
     printLog({LOG_ERROR, "[dht22]", "Error reading data. Check wiring."});
     printLog({LOG_ERROR, "[dht22]", "Humidity: %s"}, char(h));
     printLog({LOG_ERROR, "[dht22]", "Temperature: %f\n"}, h);
-    currentState = STATE_ERR;
+    setState(STATE_ERR);
   }
 
   WiFi.mode(WIFI_STA);
@@ -68,7 +69,7 @@ SensorReadings BalloonController::readSensors() {
   float pressure = bmp.readPressure();
 
   if (isnan(dhtTemp) || isnan(bmpTemp) || isnan(humidity) || isnan(pressure)) {
-    currentState = STATE_ERR;
+    setState(STATE_ERR);
     SensorReadings errResult = {ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL,
                                 ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL};
     return errResult;
@@ -87,22 +88,26 @@ SensorReadings BalloonController::readSensors() {
     result.longitude = gps.location.lng();
     result.wind_speed = gps.speed.mps();
     result.wind_dir = fmod(gps.course.deg() + 180, 360);
-    currentState = STATE_OK;
+    setState(STATE_OK);
   } else {
     result.latitude = ERR_VAL;
     result.longitude = ERR_VAL;
     result.wind_speed = 0;
     result.wind_dir = 0;
-    currentState = STATE_ERR;
+    setState(STATE_ERR);
   }
+
+  printLog({LOG_INFO, "[gps]", "Found %s satellite(s)"},
+           (char *)gps.satellites.value());
 
   return result;
 }
 
 void BalloonController::formatReadings(SensorReadings data, char *dest) {
   sprintf(dest, "%s\n---------------------------@%s/t%sh%sb%s\n",
-          getCoordinates(data), internalTime(), _formatTemp(data.BMP_temp),
-          _formatHumidity(data.humidity), _formatPressure(data.pressure));
+          _formatCoords(data.latitude, data.longitude), _formatTime(),
+          _formatTemp(data.BMP_temp), _formatHumidity(data.humidity),
+          _formatPressure(data.pressure));
 }
 
 void printLog(LogMessage l, ...) {
@@ -118,14 +123,24 @@ void printLog(LogMessage l, ...) {
   Serial.printf("[%s] [%s] %s\n", sevStr, l.task, buf);
 }
 
+void streamToGPS(HardwareSerial uartin) {
+  for (int i = 0; i < 128 && uartin.available() > 0; i++) {
+    char c = uartin.read();
+
+    if ((32 <= c && c <= 126) || c == '\r' || c == '\n') {
+      Serial.write(c);
+      gps.encode(c);
+    }
+  }
+}
+
 SystemState BalloonController::getState() { return _state; }
 
 void BalloonController::setState(SystemState newState) {
   this->_state = newState;
 }
 
-void BalloonController::connectWiFi(const NetworkInfo nets[],
-                                    int to_ms = 10000) {
+void BalloonController::connectWiFi(const NetworkInfo nets[], int to_ms) {
   for (int i = 0; i < 2; i++) {
     printLog({LOG_DEBUG, "[network]"
                          "Trying %s"},

@@ -10,6 +10,7 @@
 
 #include "Arduino.h"
 
+#include "HardwareSerial.h"
 #include "time.h"
 #include <Adafruit_BMP280.h>
 #include <Adafruit_Sensor.h>
@@ -60,6 +61,7 @@ public:
   SensorReadings readSensors();
   void formatReadings(SensorReadings readings, char *dest);
   void printLog(LogMessage l, ...);
+  void streamToGPS(HardwareSerial uartin);
 
   SystemState getState();
   void setState(SystemState newState);
@@ -76,17 +78,13 @@ private:
   static void _reconnectTaskWrapped();
 
   const char *NTP_SERVER = "pool.ntp.org";
-  const NetworkInfo networks[2] = {
-      {"Launchpad Internal", "L@unchP@d!nc"},
-      {"Bill Clinternet", "UsmC2336"},
-  };
   const int LED_PIN = 48;
   const uint8_t DHT_PIN = 2;
   const int LED_BRIGHTNESS = 64;
   const float ERR_VAL = 999.0;
   const uint8_t DHTTYPE = 22;
 
-  DHT dht = DHT(DHT_PIN, DHTTYPE);
+  DHT dht{DHT_PIN, DHTTYPE};
   Adafruit_BMP280 bmp;
   TinyGPSPlus gps;
   SystemState currentState = STATE_INIT;
