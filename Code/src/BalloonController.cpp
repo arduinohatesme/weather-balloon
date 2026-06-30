@@ -40,8 +40,10 @@ BalloonController::BalloonController() {
 
   delay(3000);
   dht.begin();
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
 
-  if (!isnan(dht.readHumidity()) && !isnan(dht.readTemperature())) {
+  if (!isnan(h) && !isnan(t)) {
     printLog({LOG_INFO, "[dht22]", "DHT22 Connected and Sending Data."});
   } else {
     printLog({LOG_ERROR, "[dht22]", "Error reading data. Check wiring."});
@@ -53,11 +55,110 @@ BalloonController::BalloonController() {
   WiFi.mode(WIFI_STA);
   connectWiFi(networks);
 
-  xTaskCreatePinnedToCore(_reconnectTask, "network", 4096, nullptr, 1, nullptr,
-                          0);
+  xTaskCreatePinnedToCore(this->_reconnectTaskWrapped, "network", 4096, nullptr,
+                          1, nullptr, 0);
 
   printLog({LOG_INFO, "[main]", "All systems initialized."});
 }
+
+SensorReadings BalloonController::readSensors() {
+  float dhtTemp = dht.readTemperature();
+  float bmpTemp = bmp.readTemperature();
+  float humidity = dht.readHumidity();
+  float pressure = bmp.readPressure();
+
+  if (isnan(dhtTemp) || isnan(bmpTemp) || isnan(humidity) || isnan(pressure)) {
+    currentState = STATE_ERR;
+    SensorReadings errResult = {ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL,
+                                ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL};
+    return errResult;
+  }
+
+  float hectoPascals = (pressure / 100.0);
+
+  SensorReadings result;
+  result.DHT_temp = dhtTemp;
+  result.BMP_temp = bmpTemp;
+  result.humidity = humidity;
+  result.pressure = hectoPascals;
+
+  if (gps.location.isValid()) {
+    result.latitude = gps.location.lat();
+    result.longitude = gps.location.lng();
+    result.wind_speed = gps.speed.mps();
+    result.wind_dir = fmod(gps.course.deg() + 180, 360);
+    currentState = STATE_OK;
+  } else {
+    result.latitude = ERR_VAL;
+    result.longitude = ERR_VAL;
+    result.wind_speed = 0;
+    result.wind_dir = 0;
+    currentState = STATE_ERR;
+  }
+
+  return result;
+}
+
+void BalloonController::formatReadings(SensorReadings data, char *dest) {
+  sprintf(dest, "%s\n---------------------------@%s/t%sh%sb%s\n",
+          getCoordinates(data), internalTime(), _formatTemp(data.BMP_temp),
+          _formatHumidity(data.humidity), _formatPressure(data.pressure));
+}
+
+void printLog(LogMessage l, ...) {
+  char buf[128];
+
+  va_list args;
+  va_start(args, l);
+  vsnprintf(buf, sizeof(buf), l.message, args);
+  va_end(args);
+
+  const char *sevStr = sevStrs[(int)l.severity];
+
+  Serial.printf("[%s] [%s] %s\n", sevStr, l.task, buf);
+}
+
+SystemState BalloonController::getState() { return _state; }
+
+void BalloonController::setState(SystemState newState) {
+  this->_state = newState;
+}
+
+void BalloonController::connectWiFi(const NetworkInfo nets[],
+                                    int to_ms = 10000) {
+  for (int i = 0; i < 2; i++) {
+    printLog({LOG_DEBUG, "[network]"
+                         "Trying %s"},
+             nets[i].ssid);
+    WiFi.begin(nets[i].pass, nets[i].ssid);
+
+    unsigned long startAttemptTime = millis();
+
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - startAttemptTime < 20000) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+      printLog({LOG_INFO, "[network]"
+                          "Connected to %s\n"},
+               WiFi.SSID().c_str());
+      configTime(0, 0, NTP_SERVER);
+      return;
+    }
+
+    printLog({LOG_WARN, "[network]"
+                        "Connection attempt failed to network: %s\n"},
+             nets[i].ssid);
+  }
+  printLog({LOG_ERROR, "[network]"
+                       "All connection attempts failed."});
+}
+
+/* ---------- PRIVATE ---------- */
 
 String BalloonController::_formatTemp(float tempF) {
   int tempRounded = (int)round(tempF);
@@ -79,10 +180,11 @@ String BalloonController::_formatHumidity(float humidity) {
   return String(buffer);
 }
 
-void BalloonController::_formatCoords(float latDeg, float lngDeg, char *dest) {
+String BalloonController::_formatCoords(float latDeg, float lngDeg) {
+  char *dest;
   if (!gps.location.isValid()) {
     strcpy(dest, "0000.00N/00000.00W_");
-    return;
+    return dest;
   }
 
   char latStr[9];
@@ -91,11 +193,20 @@ void BalloonController::_formatCoords(float latDeg, float lngDeg, char *dest) {
   char lngStr[10];
   sprintf(lngStr, "%08.2f%c", lngDeg, (lngDeg >= 0) ? 'E' : 'W');
 
-  sprintf(dest, "%s/%s_", latStr, lngStr)
+  sprintf(dest, "%s/%s_", latStr, lngStr);
+  return dest;
 }
 
-String BalloonController::formatReadings(SensorReadings data, char *dest) {
-  sprintf(dest, "%s\n---------------------------@%s/t%sh%sb%s\n",
-          getCoordinates(data), internalTime(), formatTemp(data.BMP_temp),
-          formatHumidity(data.humidity), formatPressure(data.pressure), );
+void _reconnectTask() {
+  while (WiFi.status() != WL_CONNECTED) {
+    printLog({LOG_WARN, "[network]"
+                        "Connection lost. Retrying..."});
+    connectWiFi(networks);
+    vTaskDelay(30000 / portTICK_PERIOD_MS);
+  }
+}
+
+static void _reconnectTaskWrapped(void *pvParameters) {
+  auto *i = static_cast<BalloonController *>(pvParameters);
+  i->_reconnectTask();
 }

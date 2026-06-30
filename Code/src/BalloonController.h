@@ -15,6 +15,7 @@
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <TinyGPSPlus.h>
+#include <cstdint>
 
 enum SystemState {
   STATE_INIT,
@@ -62,7 +63,7 @@ public:
 
   SystemState getState();
   void setState(SystemState newState);
-  void connectWiFi(NetworkInfo nets[]);
+  void connectWiFi(const NetworkInfo nets[], int to_ms = 10);
 
 private:
   String _formatHumidity(float tempF);
@@ -72,6 +73,7 @@ private:
   String _formatTime();
 
   void _reconnectTask();
+  static void _reconnectTaskWrapped();
 
   const char *NTP_SERVER = "pool.ntp.org";
   const NetworkInfo networks[2] = {
@@ -79,9 +81,15 @@ private:
       {"Bill Clinternet", "UsmC2336"},
   };
   const int LED_PIN = 48;
-  const int DHT_PIN = 2;
+  const uint8_t DHT_PIN = 2;
   const int LED_BRIGHTNESS = 64;
   const float ERR_VAL = 999.0;
+  const uint8_t DHTTYPE = 22;
+
+  DHT dht = DHT(DHT_PIN, DHTTYPE);
+  Adafruit_BMP280 bmp;
+  TinyGPSPlus gps;
+  SystemState currentState = STATE_INIT;
 
   SystemState _state;
 };

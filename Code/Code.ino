@@ -1,10 +1,10 @@
-#include <Wire.h>
-#include <DHT.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BMP280.h>
-#include <WiFi.h>
 #include "time.h"
+#include <Adafruit_BMP280.h>
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
 #include <TinyGPSPlus.h>
+#include <WiFi.h>
+#include <Wire.h>
 #include <math.h>
 
 #define DHT22_PIN 2
@@ -18,12 +18,7 @@
 #define LED_PIN 48
 #endif
 
-enum SystemState {
-  BOOTING,
-  SYSTEM_OK,
-  READ_ERROR,
-  HARDWARE_FIX
-};
+enum SystemState { BOOTING, SYSTEM_OK, READ_ERROR, HARDWARE_FIX };
 
 enum LogSeverity {
   DEBUG,
@@ -32,11 +27,11 @@ enum LogSeverity {
   ERROR,
 };
 
-const char* sevStrs[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
+const char *sevStrs[] = {"DEBUG", "INFO", "WARNING", "ERROR"};
 
 struct NetworkInfo {
-  char* ssid;
-  char* pass;
+  char *ssid;
+  char *pass;
 };
 
 struct SensorReadings {
@@ -52,11 +47,11 @@ struct SensorReadings {
 
 struct LogMessage {
   LogSeverity severity;
-  char* task;
-  char* message;
+  char *task;
+  char *message;
 };
 
-const char* ntpServer = "pool.ntp.org";
+const char *ntpServer = "pool.ntp.org";
 
 float last_v = 0;
 unsigned long last_time = 0;
@@ -74,25 +69,25 @@ void printLog(LogMessage l, ...) {
   vsnprintf(buf, sizeof(buf), l.message, args);
   va_end(args);
 
-  const char* sevStr = sevStrs[(int)l.severity];
+  const char *sevStr = sevStrs[(int)l.severity];
 
   Serial.printf("[%s] [%s] %s\n", sevStr, l.task, buf);
 }
 
 void setBuiltInLED(SystemState state) {
   switch (state) {
-    case BOOTING:
-      neopixelWrite(LED_PIN, 0, 0, RGB_BRIGHTNESS);
-      break;
-    case SYSTEM_OK:
-      neopixelWrite(LED_PIN, 0, RGB_BRIGHTNESS, 0);
-      break;
-    case READ_ERROR:
-      neopixelWrite(LED_PIN, RGB_BRIGHTNESS, RGB_BRIGHTNESS / 2, 0);
-      break;
-    case HARDWARE_FIX:
-      neopixelWrite(LED_PIN, RGB_BRIGHTNESS, 0, 0);
-      break;
+  case BOOTING:
+    rgbLedWrite(LED_PIN, 0, 0, RGB_BRIGHTNESS);
+    break;
+  case SYSTEM_OK:
+    rgbLedWrite(LED_PIN, 0, RGB_BRIGHTNESS, 0);
+    break;
+  case READ_ERROR:
+    rgbLedWrite(LED_PIN, RGB_BRIGHTNESS, RGB_BRIGHTNESS / 2, 0);
+    break;
+  case HARDWARE_FIX:
+    rgbLedWrite(LED_PIN, RGB_BRIGHTNESS, 0, 0);
+    break;
   }
 }
 
@@ -104,7 +99,8 @@ SensorReadings readSensors() {
 
   if (isnan(dhtTemp) || isnan(bmpTemp) || isnan(humidity) || isnan(pressure)) {
     currentState = READ_ERROR;
-    SensorReadings errResult = { ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL };
+    SensorReadings errResult = {ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL,
+                                ERR_VAL, ERR_VAL, ERR_VAL, ERR_VAL};
     return errResult;
   }
 
@@ -138,32 +134,33 @@ void DHT_Startup() {
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   if (isnan(h) || isnan(t)) {
-    printLog({ ERROR, "dht22", "Error reading data. Check wiring." });
-    printLog({ ERROR, "[dht22]", "Humidity: %s" }, char(h));
-    printLog({ ERROR, "[dht22]", "Temperature: %f\n" }, h);
+    printLog({ERROR, "[dht22]", "Error reading data. Check wiring."});
+    printLog({ERROR, "[dht22]", "Humidity: %s"}, char(h));
+    printLog({ERROR, "[dht22]", "Temperature: %f\n"}, h);
     currentState = READ_ERROR;
     return;
   }
-  printLog({ INFO, "[dht22]", "DHT22 Connected and Sending Data." });
+  printLog({INFO, "[dht22]", "DHT22 Connected and Sending Data."});
 }
 
 bool timeSynced = false;
 
 const NetworkInfo networks[2] = {
-  { "Launchpad Internal", "L@unchP@d!nc" },
-  { "Bill Clinternet", "UsmC2336" },
+    {"Launchpad Internal", "L@unchP@d!nc"},
+    {"Bill Clinternet", "UsmC2336"},
 };
 
-void connectWithTimeout(const NetworkInfo* nets) {
+void connectWithTimeout(const NetworkInfo *nets) {
   for (int i = 0; i < 2; i++) {
-    printLog({ DEBUG, "[network]"
-                      "Trying %s" },
+    printLog({DEBUG, "[network]"
+                     "Trying %s"},
              nets[i].ssid);
     WiFi.begin(nets[i].pass, nets[i].ssid);
 
     unsigned long startAttemptTime = millis();
 
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 20000) {
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - startAttemptTime < 20000) {
       delay(500);
       Serial.print(".");
     }
@@ -171,25 +168,25 @@ void connectWithTimeout(const NetworkInfo* nets) {
     Serial.println();
 
     if (WiFi.status() == WL_CONNECTED) {
-      printLog({ INFO, "[network]"
-                       "Connected to %s\n" },
+      printLog({INFO, "[network]"
+                      "Connected to %s\n"},
                WiFi.SSID().c_str());
       configTime(0, 0, ntpServer);
       return;
     }
 
-    printLog({ WARNING, "[network]"
-                        "Connection attempt failed to network: %s\n" },
+    printLog({WARNING, "[network]"
+                       "Connection attempt failed to network: %s\n"},
              nets[i].ssid);
   }
-  printLog({ ERROR, "[network]"
-                    "All connection attempts failed." });
+  printLog({ERROR, "[network]"
+                   "All connection attempts failed."});
 }
 
-void WiFiReconnectorTask(void* pvParameters) {
+void WiFiReconnectorTask(void *pvParameters) {
   while (WiFi.status() != WL_CONNECTED) {
-    printLog({ WARNING, "[network]"
-                        "Connection lost. Retrying..." });
+    printLog({WARNING, "[network]"
+                       "Connection lost. Retrying..."});
     connectWithTimeout(networks);
     vTaskDelay(30000 / portTICK_PERIOD_MS);
   }
@@ -202,18 +199,20 @@ void setup() {
 
   Serial.begin(115200);
   unsigned long start = millis();
-  while (!Serial && millis() - start < 3000);
+  while (!Serial && millis() - start < 3000)
+    ;
 
   setBuiltInLED(BOOTING);
-  printLog({ INFO, "[init]", "Initializing system..." });
+  printLog({INFO, "[init]", "Initializing system..."});
 
   Wire.begin();
 
   if (!bmp.begin(0x76) && !bmp.begin(0x77)) {
-    printLog({ ERROR, "[bmp280]", "Error connecting over I2C. Check wiring." });
+    printLog({ERROR, "[bmp280]", "Error connecting over I2C. Check wiring."});
     currentState = HARDWARE_FIX;
     setBuiltInLED(HARDWARE_FIX);
-    while (1) delay(10);
+    while (1)
+      delay(10);
   }
 
   Serial1.setRxBufferSize(2048);
@@ -221,39 +220,34 @@ void setup() {
 
   DHT_Startup();
 
-  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
-                  Adafruit_BMP280::SAMPLING_X2,
-                  Adafruit_BMP280::SAMPLING_X16,
-                  Adafruit_BMP280::FILTER_X16,
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, Adafruit_BMP280::SAMPLING_X2,
+                  Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16,
                   Adafruit_BMP280::STANDBY_MS_500);
 
   WiFi.mode(WIFI_STA);
   connectWithTimeout(networks);
 
-  printLog({ INFO, "[init]", "All systems initialized." });
+  printLog({INFO, "[init]", "All systems initialized."});
 
-  xTaskCreatePinnedToCore(
-    WiFiReconnectorTask,
-    "WiFiTask",
-    4096,
-    NULL,
-    1,
-    NULL,
-    0);
+  xTaskCreatePinnedToCore(WiFiReconnectorTask, "WiFiTask", 4096, NULL, 1, NULL,
+                          0);
 }
 
 String getCoordinates(SensorReadings data) {
-  if (!gps.location.isValid()) return "0000.00N/00000.00W_";
+  if (!gps.location.isValid())
+    return "0000.00N/00000.00W_";
 
   int latDeg = (int)data.latitude;
   double latMin = (data.latitude - latDeg) * 60.0;
   char latStr[9];
-  sprintf(latStr, "%02d%05.2f%c", abs(latDeg), latMin, (latDeg >= 0) ? 'N' : 'S');
+  sprintf(latStr, "%02d%05.2f%c", abs(latDeg), latMin,
+          (latDeg >= 0) ? 'N' : 'S');
 
   int lngDeg = (int)data.longitude;
   double lngMin = (data.longitude - lngDeg) * 60.0;
   char lngStr[10];
-  sprintf(lngStr, "%03d%05.2f%c", abs(lngDeg), lngMin, (lngDeg >= 0) ? 'E' : 'W');
+  sprintf(lngStr, "%03d%05.2f%c", abs(lngDeg), lngMin,
+          (lngDeg >= 0) ? 'E' : 'W');
 
   return latStr, "/", lngStr, "_";
 }
@@ -263,11 +257,12 @@ float WindGust = 0;
 String internalTime() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
-    printLog({ WARNING, "[time]", "Time not set yet. Sync with NTP first." });
+    printLog({WARNING, "[time]", "Time not set yet. Sync with NTP first."});
     return "000000";
   }
   char buf[16];
-  snprintf(buf, sizeof(buf), "%02d%02d%02d", (const char*)timeinfo.tm_mday, (const char*)timeinfo.tm_hour, (const char*)timeinfo.tm_min);
+  snprintf(buf, sizeof(buf), "%02d%02d%02d", (const char *)timeinfo.tm_mday,
+           (const char *)timeinfo.tm_hour, (const char *)timeinfo.tm_min);
   return String(buf);
 }
 
@@ -292,13 +287,11 @@ String formatHumidity(float humidity) {
 }
 
 void printMeasurements(SensorReadings data) {
-  Serial.printf(
-    "%s\n---------------------------@%s/t%sh%sb%s\n",
-    getCoordinates(data).c_str(),
-    internalTime().c_str(),
-    formatTemp(data.BMP_temp).c_str(),
-    formatHumidity(data.humidity).c_str(),
-    formatPressure(data.pressure).c_str());
+  Serial.printf("%s\n---------------------------@%s/t%sh%sb%s\n",
+                getCoordinates(data).c_str(), internalTime().c_str(),
+                formatTemp(data.BMP_temp).c_str(),
+                formatHumidity(data.humidity).c_str(),
+                formatPressure(data.pressure).c_str());
 }
 
 unsigned long lastTime = 0;
@@ -318,7 +311,8 @@ void loop() {
     }
   }
 
-  if (millis() - lastTime <= interval) return;
+  if (millis() - lastTime <= interval)
+    return;
 
   lastTime = millis();
   SensorReadings data = readSensors();
@@ -329,10 +323,11 @@ void loop() {
   WindGust = max(WindGust, data.wind_speed);
 
   if (currentState != SYSTEM_OK) {
-    printLog({ ERROR, "[main]", "Something went wrong. Check logs above." });
+    printLog({ERROR, "[main]", "Something went wrong. Check logs above."});
     currentState = READ_ERROR;
   };
 
-  printLog({ INFO, "[gps]", "Looking for satellites. Found: %s" }, (char*)gps.satellites.value());
+  printLog({INFO, "[gps]", "Looking for satellites. Found: %s"},
+           (char *)gps.satellites.value());
   currentState = READ_ERROR;
 }
